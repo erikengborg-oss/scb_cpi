@@ -1,8 +1,9 @@
+## Project structure
 Fetch yearly CPI basket weights from SCB and export:
 - CSV wide table by category and year
 - Interactive stacked-share HTML chart
 
-## Project structure
+  
 - `scripts/cpi_weights_from_scb_api.py`
 - `data/` (generated CSV)
 - `figures/` (generated HTML)
