@@ -1,5 +1,3 @@
-# kpi_scb
-
 Fetch yearly CPI basket weights from SCB and export:
 - CSV wide table by category and year
 - Interactive stacked-share HTML chart
