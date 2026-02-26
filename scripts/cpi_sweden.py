@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import requests
 
 
-# SCB API default endpoint for CPI weights (COICOP, KPI2020).
+# API
 API_URL = "https://api.scb.se/OV0104/v1/doris/en/ssd/START/PR/PR0101/PR0101A/KPI2020COICOP2M"
 
 COICOP_LABELS_EN = {
@@ -113,7 +113,7 @@ def build_wide_table(df: pd.DataFrame, from_year: int, to_year: int) -> pd.DataF
     return wide[["code", "label"] + year_cols]
 
 
-# Save interactive 100% stacked share chart as HTML.
+# Save interactive share chart as HTML.
 def save_stacked_share_html(wide: pd.DataFrame, out_html: Path) -> None:
     year_cols = [c for c in wide.columns if isinstance(c, int)]
     share_pct = wide[year_cols].div(wide[year_cols].sum(axis=0), axis=1) * 100.0
