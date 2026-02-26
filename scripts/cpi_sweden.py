@@ -2,25 +2,13 @@ import argparse
 import itertools
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib import colors as mcolors
 import pandas as pd
 import plotly.graph_objects as go
 import requests
 
 
-# API annual January weights for 1980-2026
+# SCB API default endpoint for CPI weights (COICOP, KPI2020).
 API_URL = "https://api.scb.se/OV0104/v1/doris/en/ssd/START/PR/PR0101/PR0101A/KPI2020COICOP2M"
-QUERY = {
-    "query": [
-        {"code": "ContentsCode", "selection": {"filter": "item", "values": ["0000080F"]}},
-        {"code": "VaruTjanstegrupp", "selection": {"filter": "item", "values": [f"{i:02d}" for i in range(14)]}},
-        {"code": "Tid", "selection": {"filter": "item", "values": [f"{y}M01" for y in range(1980, 2027)]}},
-    ],
-    "response": {"format": "json-stat2"},
-}
 
 COICOP_LABELS_EN = {
     "01": "Food and non-alcoholic beverages",
@@ -38,6 +26,34 @@ COICOP_LABELS_EN = {
     "13": "Other",
 }
 
+MUTED_PALETTE = [
+    "#4E79A7",
+    "#A0CBE8",
+    "#F28E2B",
+    "#FFBE7D",
+    "#59A14F",
+    "#8CD17D",
+    "#E15759",
+    "#FF9D9A",
+    "#B07AA1",
+    "#D4A6C8",
+    "#9C755F",
+    "#BAB0AC",
+    "#76B7B2",
+]
+
+
+def build_query(from_year: int, to_year: int, contents_code: str = "0000080F") -> dict:
+    years = [f"{y}M01" for y in range(from_year, to_year + 1)]
+    return {
+        "query": [
+            {"code": "ContentsCode", "selection": {"filter": "item", "values": [contents_code]}},
+            {"code": "VaruTjanstegrupp", "selection": {"filter": "item", "values": [f"{i:02d}" for i in range(14)]}},
+            {"code": "Tid", "selection": {"filter": "item", "values": years}},
+        ],
+        "response": {"format": "json-stat2"},
+    }
+
 
 # Convert json-stat2 payload into a flat long table.
 def json_stat2_to_df(payload: dict) -> pd.DataFrame:
@@ -54,17 +70,17 @@ def json_stat2_to_df(payload: dict) -> pd.DataFrame:
 
     combos = itertools.product(*dim_values)
     rows = []
-    for combo, v in zip(combos, payload["value"]):
+    for combo, value in zip(combos, payload["value"]):
         rec = {dims[i]: combo[i] for i in range(len(dims))}
         for i, dim in enumerate(dims):
             rec[f"{dim}_label"] = dim_labels.get(dim, {}).get(combo[i], combo[i])
-        rec["value"] = v
+        rec["value"] = value
         rows.append(rec)
     return pd.DataFrame(rows)
 
 
 # Build a yearly wide table by COICOP code.
-def build_wide_table(df: pd.DataFrame, from_year: int, to_year: int | None) -> pd.DataFrame:
+def build_wide_table(df: pd.DataFrame, from_year: int, to_year: int) -> pd.DataFrame:
     rename_map = {"VaruTjanstegrupp": "code", "Tid": "period"}
     if "VaruTjanstegrupp_label" in df.columns:
         rename_map["VaruTjanstegrupp_label"] = "label_raw"
@@ -76,10 +92,7 @@ def build_wide_table(df: pd.DataFrame, from_year: int, to_year: int | None) -> p
 
     out = out[out["code"].notna()]
     out = out[out["code"] != "00"]
-    out = out[out["year"] >= from_year]
-    if to_year is not None:
-        out = out[out["year"] <= to_year]
-
+    out = out[(out["year"] >= from_year) & (out["year"] <= to_year)]
     out = out.dropna(subset=["value"]).sort_values(["code", "year"])
     out = out.groupby(["code", "year"], as_index=False).tail(1)
 
@@ -100,23 +113,23 @@ def build_wide_table(df: pd.DataFrame, from_year: int, to_year: int | None) -> p
     return wide[["code", "label"] + year_cols]
 
 
-# Save interactive stacked share chart as HTML.
+# Save interactive 100% stacked share chart as HTML.
 def save_stacked_share_html(wide: pd.DataFrame, out_html: Path) -> None:
     year_cols = [c for c in wide.columns if isinstance(c, int)]
     share_pct = wide[year_cols].div(wide[year_cols].sum(axis=0), axis=1) * 100.0
-    colors = plt.cm.tab20(range(len(wide)))
+    palette = MUTED_PALETTE
 
     fig = go.Figure()
     for idx, row in wide.iterrows():
         label = f"{row['code']} {row['label']}"
         vals = share_pct.loc[idx, year_cols].fillna(0.0).values
-        color_hex = mcolors.to_hex(colors[idx])
+        color = palette[idx % len(palette)]
         fig.add_trace(
             go.Bar(
                 x=year_cols,
                 y=vals,
                 name=label,
-                marker=dict(color=color_hex),
+                marker=dict(color=color),
                 hovertemplate=f"Year: %{{x}}<br>Category: {label}<br>Share: %{{y:.2f}}%<extra></extra>",
             )
         )
@@ -134,12 +147,20 @@ def save_stacked_share_html(wide: pd.DataFrame, out_html: Path) -> None:
 
 
 # Run pipeline: fetch -> transform -> export CSV + HTML.
-def run(out_csv: Path, out_html: Path, from_year: int, to_year: int | None, timeout: int) -> None:
-    r = requests.post(API_URL, json=QUERY, timeout=timeout)
-    r.raise_for_status()
-    payload = r.json()
+def run(
+    out_csv: Path,
+    out_html: Path,
+    from_year: int,
+    to_year: int,
+    timeout: int,
+    api_url: str,
+    contents_code: str,
+) -> None:
+    query = build_query(from_year=from_year, to_year=to_year, contents_code=contents_code)
+    response = requests.post(api_url, json=query, timeout=timeout)
+    response.raise_for_status()
 
-    raw = json_stat2_to_df(payload)
+    raw = json_stat2_to_df(response.json())
     wide = build_wide_table(raw, from_year=from_year, to_year=to_year)
     if wide.empty:
         raise ValueError("The table is empty after filtering.")
@@ -152,26 +173,26 @@ def run(out_csv: Path, out_html: Path, from_year: int, to_year: int | None, time
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fetch CPI weights from SCB API and build a yearly wide table.")
+    parser = argparse.ArgumentParser(description="Fetch CPI weights from SCB API and export CSV + HTML.")
     base_dir = Path.home() / "python" / "kpi_scb"
-    parser.add_argument(
-        "--out-csv",
-        type=Path,
-        default=base_dir / "data" / "share_cpi_wide.csv",
-    )
-    parser.add_argument(
-        "--out-html",
-        type=Path,
-        default=base_dir / "figures" / "index.html",
-    )
+    parser.add_argument("--out-csv", type=Path, default=base_dir / "data" / "share_cpi_wide.csv")
+    parser.add_argument("--out-html", type=Path, default=base_dir / "figures" / "index.html")
     parser.add_argument("--from-year", type=int, default=1980)
-    parser.add_argument("--to-year", type=int, default=None)
+    parser.add_argument("--to-year", type=int, default=2026)
     parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument("--api-url", type=str, default=API_URL)
+    parser.add_argument("--contents-code", type=str, default="0000080F")
     args = parser.parse_args()
+
+    if args.from_year > args.to_year:
+        raise ValueError("--from-year must be less than or equal to --to-year.")
+
     run(
         out_csv=args.out_csv,
         out_html=args.out_html,
         from_year=args.from_year,
         to_year=args.to_year,
         timeout=args.timeout,
+        api_url=args.api_url,
+        contents_code=args.contents_code,
     )
