@@ -117,7 +117,7 @@ def save_stacked_share_html(wide: pd.DataFrame, out_html: Path) -> None:
         )
 
     fig.update_layout(
-        title="Share of CPI-basket over time",
+        title="Share of the CPI-basket over time",
         barmode="stack",
         xaxis_title="Year",
         yaxis_title="Share (%)",
@@ -151,12 +151,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--out-csv",
         type=Path,
-        default=base_dir / "data" / "scb_cpi_weights_major_wide.csv",
+        default=base_dir / "data" / "share_cpi_wide.csv",
     )
     parser.add_argument(
         "--out-html",
         type=Path,
-        default=base_dir / "figures" / "scb_weights_share_stacked_by_year_major_categories.html",
+        default=base_dir / "figures" / "index.html",
     )
     parser.add_argument("--from-year", type=int, default=1980)
     parser.add_argument("--to-year", type=int, default=None)
